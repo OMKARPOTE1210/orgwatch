@@ -1,0 +1,8 @@
+requests
+psutil
+cryptography
+scikit-learn
+numpy
+watchdog
+pefile
+pyinstaller
