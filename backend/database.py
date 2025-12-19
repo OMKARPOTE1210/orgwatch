@@ -3,7 +3,12 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://orgwatch:secure_pass_123@db/orgwatch_db")
+# PROD: Get DB URL from Cloud Environment | DEV: Fallback to localhost
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://orgwatch:secure_pass_123@localhost/orgwatch_db")
+
+# Fix for Render.com (Postgres url starts with postgres:// but SQLAlchemy needs postgresql://)
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -4,20 +4,29 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 import models, database
-import random, time, logging, json
+import random, time, logging, json, os
 from datetime import datetime
 
 # --- CONFIGURATION ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OrgWatch-C2")
 
+# Create tables
 models.Base.metadata.create_all(bind=database.engine)
+
 app = FastAPI(title="OrgWatch Enterprise API")
 
-# --- CORS (Crucial for Frontend Communication) ---
+# --- CORS SETTINGS (CRITICAL FOR PRODUCTION) ---
+origins = [
+    "http://localhost:5173",            # Local Frontend
+    "http://localhost",                 # Docker Frontend
+    "https://omkarpote1210.github.io",  # YOUR GITHUB PAGES FRONTEND
+    # "https://your-custom-domain.com"    # Future domain - Add your domain here
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, replace with specific domain
+    allow_origins=["*"], # Allow all for now to ensure Desktop App connects easily. RESTRICT THIS IN PROD!
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,7 +51,17 @@ class CommandResult(BaseModel):
     command_id: int
     result: dict
 
-# --- EMAIL LOGIC (Simulated) ---
+class LogResponse(BaseModel):
+    id: int
+    timestamp: datetime
+    event: str
+    details: str
+    device_id: Optional[str]
+
+    class Config:
+        from_attributes = True # updated for Pydantic v2
+
+# --- EMAIL LOGIC (SIMULATED) ---
 def send_email_alert(device_id: str, issue: str):
     logger.warning(f"\n[MAIL SERVER] 🚨 Sending Alert for {device_id}\nSubject: SECURITY INCIDENT\nBody: {issue}\n")
 
@@ -65,17 +84,19 @@ def enroll_device(device: DeviceEnroll, db: Session = Depends(database.get_db)):
             status="online", risk=0, os="Windows 11", cpu_usage="0%", ram_usage="0%"
         )
         db.add(db_device)
-        
-        # Log enrollment
-        log = models.Log(device_id=new_id, event="Enrollment", details=f"Device registered: {device.name}", timestamp=datetime.now())
-        db.add(log)
     
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error enrolling device: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+        
     return {"id": new_id, "status": "success"}
 
 @app.post("/api/telemetry")
 def receive_telemetry(data: TelemetryData, background_tasks: BackgroundTasks, db: Session = Depends(database.get_db)):
-    # 1. Auto-Recover Device if missing (DB Reset protection)
+    # 1. Auto-Recover Device if missing
     device = db.query(models.Device).filter(models.Device.id == data.device_id).first()
     if not device:
         device = models.Device(
@@ -83,36 +104,36 @@ def receive_telemetry(data: TelemetryData, background_tasks: BackgroundTasks, db
             status="online", risk=0, os="Windows", cpu_usage="0%", ram_usage="0%"
         )
         db.add(device)
-        db.commit()
-        db.refresh(device)
+        try:
+            db.commit()
+            db.refresh(device)
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error creating auto-recovered device: {e}")
+            # Continue processing even if device creation failed to log alert? 
+            # Ideally we fail here, but let's try to be robust.
 
     # 2. Update Real-time Stats
-    device.cpu_usage = f"{data.metrics.get('cpu', 0)}%"
-    device.ram_usage = f"{data.metrics.get('ram', 0)}%"
-    device.last_seen = datetime.now()
-    
-    if data.ai_status == "anomaly":
-        device.risk = min(device.risk + 15, 100)
-        device.status = "warning"
-    else:
-        # Slowly heal risk if normal
-        device.status = "online"
+    if device:
+        device.cpu_usage = f"{data.metrics.get('cpu', 0)}%"
+        device.ram_usage = f"{data.metrics.get('ram', 0)}%"
+        device.last_seen = datetime.now()
         
-    db.commit()
+        if data.ai_status == "anomaly":
+            device.risk = min(device.risk + 15, 100)
+            device.status = "warning"
+        else:
+            # simple healing mechanic
+            device.status = "online"
+            
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error updating telemetry stats: {e}")
 
-    # 3. Log Heartbeat (Optional: Reduce noise by logging only periodically or on change)
-    # For demo, logging everything to show activity stream
-    # log_hb = models.Log(
-    #     device_id=data.device_id, 
-    #     event="Heartbeat", 
-    #     details=f"CPU: {data.metrics.get('cpu')}% | RAM: {data.metrics.get('ram')}%", 
-    #     timestamp=datetime.now()
-    # )
-    # db.add(log_hb)
-
-    # 4. Handle Alerts
+    # 3. Handle Alerts & Logs
     if data.alert:
-        # Create Alert
         new_alert = models.Alert(
             title=f"AI Threat: {data.device_id}", 
             severity="critical", 
@@ -122,20 +143,25 @@ def receive_telemetry(data: TelemetryData, background_tasks: BackgroundTasks, db
         )
         db.add(new_alert)
         
-        # Create Log
-        log_alert = models.Log(
+        # Log entry for alert
+        new_log = models.Log(
             device_id=data.device_id,
-            event="Anomaly",
+            event="Threat Detected",
             details=data.alert_details,
             timestamp=datetime.now()
         )
-        db.add(log_alert)
-        db.commit()
+        db.add(new_log)
         
-        # Send Mail
-        background_tasks.add_task(send_email_alert, data.device_id, data.alert_details)
+        try:
+            db.commit()
+            background_tasks.add_task(send_email_alert, data.device_id, data.alert_details)
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error saving alert: {e}")
     else:
-        db.commit()
+        # Optional: Log heartbeat for debugging or specific events
+        # To avoid spamming logs table, maybe only log significant changes or periodic info
+        pass
         
     return {"status": "processed"}
 
@@ -145,13 +171,14 @@ def receive_telemetry(data: TelemetryData, background_tasks: BackgroundTasks, db
 def trigger_scan(device_id: str, db: Session = Depends(database.get_db)):
     cmd = models.Command(device_id=device_id, type="deep_scan", status="pending")
     db.add(cmd)
-    
-    # Log Action
-    log = models.Log(device_id=device_id, event="Command Issued", details="Deep Scan requested by Admin", timestamp=datetime.now())
-    db.add(log)
-    
-    db.commit()
-    db.refresh(cmd)
+    try:
+        db.commit()
+        db.refresh(cmd)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error triggering scan: {e}")
+        raise HTTPException(status_code=500, detail="Failed to queue command")
+        
     return {"command_id": cmd.id, "status": "queued"}
 
 @app.get("/api/commands/{command_id}")
@@ -168,12 +195,16 @@ def get_command_status(command_id: int, db: Session = Depends(database.get_db)):
 
 @app.get("/api/agent/{device_id}/commands")
 def get_pending_commands(device_id: str, db: Session = Depends(database.get_db)):
-    # Fetch oldest pending command
     cmd = db.query(models.Command).filter(models.Command.device_id == device_id, models.Command.status == "pending").first()
     if cmd:
         cmd.status = "processing"
-        db.commit()
-        return {"id": cmd.id, "type": cmd.type}
+        try:
+            db.commit()
+            return {"id": cmd.id, "type": cmd.type}
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error retrieving pending command: {e}")
+            return {"id": None}
     return {"id": None}
 
 @app.post("/api/agent/command_result")
@@ -182,21 +213,28 @@ def upload_result(data: CommandResult, db: Session = Depends(database.get_db)):
     if cmd:
         cmd.status = "completed"
         cmd.result = json.dumps(data.result)
-        
-        # Log Completion
-        log = models.Log(device_id=cmd.device_id, event="Command Completed", details="Deep Scan Report Uploaded", timestamp=datetime.now())
-        db.add(log)
-        
-        db.commit()
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error saving command result: {e}")
+            return {"status": "error"}
+            
     return {"status": "ok"}
-
-# --- DATA RETRIEVAL ---
 
 @app.get("/api/devices")
 def get_devices(db: Session = Depends(database.get_db)):
     return db.query(models.Device).all()
 
-@app.get("/api/logs")
+@app.get("/api/logs", response_model=List[LogResponse])
 def get_live_logs(db: Session = Depends(database.get_db)):
-    # Return last 50 logs for the dashboard feed
-    return db.query(models.Log).order_by(models.Log.timestamp.desc()).limit(50).all()
+    # Return last 50 logs descending
+    # Assuming 'models.Log' exists based on the full architecture plan, 
+    # if not, fallback to alerting logs or create the model
+    try:
+        logs = db.query(models.Log).order_by(models.Log.timestamp.desc()).limit(20).all()
+        return logs
+    except Exception as e:
+        # Fallback if Logs table doesn't exist yet or other error
+        logger.error(f"Error fetching logs: {e}")
+        return []
