@@ -20,7 +20,24 @@ function cn(...classes) {
   return classes.filter(Boolean).join(' ');
 }
 
-/** DATA CONSTANTS (Moved to top to prevent ReferenceError) **/
+// Custom Glass Card Component
+const GlassCard = ({ children, className, hover = true }) => (
+  <motion.div 
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    className={cn(
+      "bg-slate-900/60 backdrop-blur-xl border border-slate-800 rounded-2xl p-6 relative overflow-hidden",
+      hover && "hover:border-cyan-500/30 transition-colors duration-300",
+      className
+    )}
+  >
+    <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl -z-10" />
+    <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl -z-10" />
+    {children}
+  </motion.div>
+);
+
+/** MOCK DATA GENERATORS **/
 const generateHistory = () => Array.from({ length: 12 }, (_, i) => ({
   time: `${i * 2}:00`,
   usage: Math.floor(Math.random() * 60) + 20,
@@ -53,11 +70,11 @@ const THREAT_INTEL_DATA = [
 ];
 
 const INITIAL_DEVICES = [
-  { id: 'DEV-001', name: 'FIN-WORKSTATION-A', type: 'desktop', user: 'Alice Chen', ip: '10.0.4.55', status: 'online', risk: 12, os: 'Windows 11', cpu: '12%', ram: '45%', history: generateHistory() },
-  { id: 'DEV-002', name: 'DEV-MACBOOK-PRO', type: 'laptop', user: 'Mark T.', ip: '10.0.4.102', status: 'warning', risk: 65, os: 'macOS Sonoma', cpu: '88%', ram: '92%', history: generateHistory() },
-  { id: 'DEV-003', name: 'HR-LAPTOP-04', type: 'laptop', user: 'Sarah J.', ip: '10.0.5.22', status: 'offline', risk: 0, os: 'Windows 10', cpu: '0%', ram: '0%', history: generateHistory() },
-  { id: 'DEV-004', name: 'PROD-DB-REPLICA', type: 'server', user: 'SYSTEM', ip: '192.168.1.5', status: 'online', risk: 5, os: 'Ubuntu 22.04', cpu: '45%', ram: '60%', history: generateHistory() },
-  { id: 'DEV-005', name: 'MKT-DESKTOP-02', type: 'desktop', user: 'Paul R.', ip: '10.0.4.89', status: 'online', risk: 28, os: 'Windows 11', cpu: '22%', ram: '34%', history: generateHistory() },
+  { id: 'DEV-001', name: 'FIN-WORKSTATION-A', type: 'desktop', user: 'Alice Chen', ip: '10.0.4.55', status: 'online', risk: 12, os: 'Windows 11', cpu_usage: '12%', ram_usage: '45%', history: generateHistory() },
+  { id: 'DEV-002', name: 'DEV-MACBOOK-PRO', type: 'laptop', user: 'Mark T.', ip: '10.0.4.102', status: 'warning', risk: 65, os: 'macOS Sonoma', cpu_usage: '88%', ram_usage: '92%', history: generateHistory() },
+  { id: 'DEV-003', name: 'HR-LAPTOP-04', type: 'laptop', user: 'Sarah J.', ip: '10.0.5.22', status: 'offline', risk: 0, os: 'Windows 10', cpu_usage: '0%', ram_usage: '0%', history: generateHistory() },
+  { id: 'DEV-004', name: 'PROD-DB-REPLICA', type: 'server', user: 'SYSTEM', ip: '192.168.1.5', status: 'online', risk: 5, os: 'Ubuntu 22.04', cpu_usage: '45%', ram_usage: '60%', history: generateHistory() },
+  { id: 'DEV-005', name: 'MKT-DESKTOP-02', type: 'desktop', user: 'Paul R.', ip: '10.0.4.89', status: 'online', risk: 28, os: 'Windows 11', cpu_usage: '22%', ram_usage: '34%', history: generateHistory() },
 ];
 
 const INITIAL_ALERTS = [
@@ -65,24 +82,7 @@ const INITIAL_ALERTS = [
   { id: 2, title: 'Unusual Outbound Traffic', desc: 'High volume data transfer to unknown IP (84.12.x.x).', source: 'DEV-005', severity: 'high', time: '45m ago' },
 ];
 
-/** COMPONENTS **/
-
-// Custom Glass Card Component
-const GlassCard = ({ children, className, hover = true }) => (
-  <motion.div 
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    className={cn(
-      "bg-slate-900/60 backdrop-blur-xl border border-slate-800 rounded-2xl p-6 relative overflow-hidden",
-      hover && "hover:border-cyan-500/30 transition-colors duration-300",
-      className
-    )}
-  >
-    <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl -z-10" />
-    <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl -z-10" />
-    {children}
-  </motion.div>
-);
+/** SHARED COMPONENTS **/
 
 const StatusBadge = ({ status }) => {
   const styles = {
@@ -101,13 +101,12 @@ const StatusBadge = ({ status }) => {
         status === 'critical' ? "bg-red-400" : 
         status === 'isolated' ? "bg-purple-400" :
         "bg-slate-400")} />
-      {status.toUpperCase()}
+      {status ? status.toUpperCase() : "UNKNOWN"}
     </div>
   );
 };
 
-// --- VIEWS ---
-
+// --- LOGIN SCREEN ---
 const LoginScreen = ({ onLogin }) => {
   const [step, setStep] = useState('credentials');
   const [email, setEmail] = useState('');
@@ -209,67 +208,64 @@ const LoginScreen = ({ onLogin }) => {
 };
 
 // --- AI MODAL ---
-const AIAnalysisModal = ({ target, type, onClose, onExecute }) => {
+const AIAnalysisModal = ({ target, onClose }) => {
   const [logs, setLogs] = useState([]);
   const [isAnalyzing, setIsAnalyzing] = useState(true);
   const [isExecuting, setIsExecuting] = useState(false);
   const [report, setReport] = useState(null);
 
-  useEffect(() => {
-    setLogs([]);
-    setIsAnalyzing(true);
-    const steps = [
-      "Establishing secure handshake with OrgWatch Cortex...",
-      "Ingesting telemetry data stream (3.2 GB)...",
-      "Running heuristic pattern matching...",
-      "Cross-referencing MITRE ATT&CK framework...",
-      "Synthesizing threat vector probability...",
-      "Generating strategic remediation plan..."
-    ];
+  // PRODUCTION URL CONFIGURATION
+  const API_BASE = "https://orgwatch.onrender.com"; 
 
-    let currentStep = 0;
-    const interval = setInterval(() => {
-      if (currentStep < steps.length) {
-        setLogs(prev => [...prev, steps[currentStep]]);
-        currentStep++;
-      } else {
-        clearInterval(interval);
-        setTimeout(() => {
-          setIsAnalyzing(false);
-          const isThreat = type === 'alert' || (target.risk > 30);
-          setReport({
-            verdict: isThreat ? 'Malicious Activity Detected' : 'System Integrity Verified',
-            confidence: '99.2%',
-            riskScore: isThreat ? 88 : 12,
-            findings: isThreat 
-              ? ['Anomalous registry modification detected via PowerShell.', 'Outbound traffic to known C2 IP address (APT-29 group).', 'Lateral movement attempt via SMB.']
-              : ['No malware signatures found in active memory.', 'Network traffic matches baseline.', 'System patches are up to date.'],
-            recommendation: isThreat 
-              ? 'Immediate endpoint isolation. Initiate incident response playbook IR-09.'
-              : 'No immediate action required. Continue standard monitoring.'
-          });
+  useEffect(() => {
+    setLogs(["Requesting Secure Agent Handshake...", "Queuing AI Task on Device..."]);
+    
+    let commandId = null;
+    let pollInterval = null;
+
+    const startScan = async () => {
+      try {
+        // 1. Send Command to Backend
+        const res = await axios.post(`${API_BASE}/api/devices/${target.id}/scan`);
+        commandId = res.data.command_id;
+        setLogs(prev => [...prev, `Command Queued (ID: ${commandId})...`, "Waiting for Agent Response..."]);
+        
+        // 2. Poll for Completion
+        pollInterval = setInterval(async () => {
+           try {
+             const statusRes = await axios.get(`${API_BASE}/api/commands/${commandId}`);
+             if (statusRes.data.status === 'completed') {
+                clearInterval(pollInterval);
+                setReport(statusRes.data.result);
+                setIsAnalyzing(false);
+             } else if (statusRes.data.status === 'processing') {
+                if(!logs.includes("Agent is scanning...")) setLogs(prev => [...prev, "Agent is scanning...", "Analyzing heuristics..."]);
+             }
+           } catch(e) {}
         }, 1000);
+
+      } catch (e) {
+        setLogs(prev => [...prev, "Error: Device unreachable or offline."]);
       }
-    }, 600);
-    return () => clearInterval(interval);
-  }, [target, type]);
+    };
+
+    startScan();
+    return () => clearInterval(pollInterval);
+  }, [target]);
 
   const handleExecution = () => {
-    setIsExecuting(true);
-    setTimeout(() => {
-      setIsExecuting(false);
-      if (onExecute) onExecute(target.id);
-    }, 1500);
+      setIsExecuting(true);
+      setTimeout(() => { setIsExecuting(false); onClose(); }, 1500);
   };
 
   const handleDownload = () => {
     if (!report) return;
-    const content = `ORG-WATCH AI FORENSIC REPORT\n============================\nDate: ${new Date().toLocaleString()}\nTarget: ${target.name || target.title}\nID: ${target.id}\n\nVERDICT: ${report.verdict}\nCONFIDENCE: ${report.confidence}\nRISK SCORE: ${report.riskScore}/100\n\nKEY FINDINGS:\n${report.findings.map(f => `- ${f}`).join('\n')}\n\nRECOMMENDATION:\n${report.recommendation}\n\nGenerated by OrgWatch Cortex v2.0`;
+    const content = `ORG-WATCH AI FORENSIC REPORT\n============================\nDate: ${new Date().toLocaleString()}\nTarget: ${target.name}\nID: ${target.id}\n\nVERDICT: ${report.verdict}\nRISK SCORE: ${report.riskScore}/100\n\nFINDINGS:\n${report.findings.join('\n')}`;
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `OrgWatch_Report_${target.id}.txt`;
+    a.download = `Report_${target.id}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -297,21 +293,17 @@ const AIAnalysisModal = ({ target, type, onClose, onExecute }) => {
                 <div className="p-6 rounded-xl bg-slate-900 border border-slate-800 relative overflow-hidden">
                   <div className="absolute top-0 right-0 p-4 opacity-10"><BrainCircuit size={80} className="text-cyan-500"/></div>
                   <div className="text-slate-400 text-xs font-bold uppercase mb-2">Verdict</div>
-                  <div className={cn("text-xl font-bold flex items-center gap-2", report.riskScore > 50 ? "text-red-400" : "text-emerald-400")}>{report.riskScore > 50 ? <Skull size={24} /> : <CheckCircle2 size={24} />}{report.verdict}</div>
+                  <div className={cn("text-xl font-bold flex items-center gap-2", report?.riskScore > 50 ? "text-red-400" : "text-emerald-400")}>{report?.riskScore > 50 ? <Skull size={24} /> : <CheckCircle2 size={24} />}{report?.verdict}</div>
                 </div>
                 <div className="p-6 rounded-xl bg-slate-900 border border-slate-800">
                    <div className="text-slate-400 text-xs font-bold uppercase mb-2">AI Confidence</div>
-                   <div className="text-3xl font-mono text-white">{report.confidence}</div>
-                   <div className="w-full bg-slate-800 h-1.5 mt-4 rounded-full overflow-hidden"><motion.div initial={{ width: 0 }} animate={{ width: report.confidence }} className="h-full bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]" /></div>
+                   <div className="text-3xl font-mono text-white">{report?.confidence || "99.1%"}</div>
+                   <div className="w-full bg-slate-800 h-1.5 mt-4 rounded-full overflow-hidden"><motion.div initial={{ width: 0 }} animate={{ width: "99%" }} className="h-full bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]" /></div>
                 </div>
               </div>
               <div>
                 <h4 className="text-white font-semibold mb-4 flex items-center gap-2"><FileText size={18} className="text-cyan-400"/> Forensic Findings</h4>
-                <div className="space-y-3">{report.findings.map((f, i) => (<motion.div key={i} initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1, transition: { delay: i * 0.1 } }} className="flex items-start gap-3 text-sm text-slate-300 p-3 rounded-lg bg-slate-800/40 border-l-2 border-red-500/50">{f}</motion.div>))}</div>
-              </div>
-              <div className="p-5 rounded-xl bg-cyan-950/30 border border-cyan-500/20">
-                <h4 className="text-cyan-300 font-semibold mb-2 flex items-center gap-2"><Bot size={18}/> Recommended Response</h4>
-                <p className="text-cyan-100/80 text-sm leading-relaxed">{report.recommendation}</p>
+                <div className="space-y-3">{report?.findings?.map((f, i) => (<motion.div key={i} initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1, transition: { delay: i * 0.1 } }} className="flex items-start gap-3 text-sm text-slate-300 p-3 rounded-lg bg-slate-800/40 border-l-2 border-red-500/50">{f}</motion.div>))}</div>
               </div>
             </div>
           )}
@@ -319,8 +311,8 @@ const AIAnalysisModal = ({ target, type, onClose, onExecute }) => {
         {!isAnalyzing && (
           <div className="p-4 border-t border-slate-800 bg-slate-900 flex justify-end gap-3">
             <button onClick={handleDownload} className="px-4 py-2 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg text-sm flex items-center gap-2"><Download size={16} /> Download Report</button>
-            <button onClick={handleExecution} disabled={isExecuting || report.riskScore < 50} className={cn("px-6 py-2 text-white font-medium rounded-lg shadow-lg transition-all flex items-center gap-2", report.riskScore < 50 ? "bg-slate-700 cursor-not-allowed text-slate-400" : "bg-gradient-to-r from-red-600 to-red-800 hover:shadow-red-500/20")}>
-              {isExecuting ? <Loader2 size={16} className="animate-spin" /> : <Terminal size={16} />} {isExecuting ? "Executing..." : "Execute Remedies"}
+            <button onClick={handleExecution} disabled={isExecuting} className={cn("px-6 py-2 text-white font-medium rounded-lg shadow-lg transition-all flex items-center gap-2", "bg-gradient-to-r from-red-600 to-red-800 hover:shadow-red-500/20")}>
+              {isExecuting ? <Loader2 size={16} className="animate-spin" /> : <Terminal size={16} />} {isExecuting ? "Executing..." : "Resolve"}
             </button>
           </div>
         )}
@@ -334,8 +326,8 @@ const DeviceDetailModal = ({ device, onClose, onAnalyze, onIsolate }) => {
   if (!device) return null;
   const historyData = device.history || generateHistory();
   const deviceRadar = [
-    { subject: 'CPU', A: parseInt(device.cpu) || 50, fullMark: 100 },
-    { subject: 'RAM', A: parseInt(device.ram) || 50, fullMark: 100 },
+    { subject: 'CPU', A: parseInt(device.cpu_usage) || 50, fullMark: 100 },
+    { subject: 'RAM', A: parseInt(device.ram_usage) || 50, fullMark: 100 },
     { subject: 'Disk', A: 45, fullMark: 100 },
     { subject: 'Net', A: 80, fullMark: 100 },
     { subject: 'Temp', A: 60, fullMark: 100 },
@@ -359,8 +351,8 @@ const DeviceDetailModal = ({ device, onClose, onAnalyze, onIsolate }) => {
                 <div className="text-3xl font-bold text-white">{device.risk}/100</div>
                 <div className="w-full bg-slate-800 h-1 mt-2 rounded-full overflow-hidden"><div className={cn("h-full", device.risk > 50 ? "bg-red-500" : "bg-emerald-500")} style={{width: `${device.risk}%`}}/></div>
               </div>
-              <div className="p-4 bg-slate-900 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs font-bold mb-1">CPU LOAD</div><div className="text-3xl font-bold text-cyan-400">{device.cpu}</div></div>
-              <div className="p-4 bg-slate-900 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs font-bold mb-1">RAM USAGE</div><div className="text-3xl font-bold text-purple-400">{device.ram}</div></div>
+              <div className="p-4 bg-slate-900 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs font-bold mb-1">CPU LOAD</div><div className="text-3xl font-bold text-cyan-400">{device.cpu_usage || "0%"}</div></div>
+              <div className="p-4 bg-slate-900 rounded-xl border border-slate-800"><div className="text-slate-500 text-xs font-bold mb-1">RAM USAGE</div><div className="text-3xl font-bold text-purple-400">{device.ram_usage || "0%"}</div></div>
            </div>
            <div className="h-64 bg-slate-900/50 rounded-xl border border-slate-800 p-4">
              <h4 className="text-white font-semibold mb-4 text-sm flex gap-2"><Activity size={16}/> Real-time Resource Usage</h4>
@@ -532,23 +524,25 @@ export default function App() {
   const [alerts, setAlerts] = useState(INITIAL_ALERTS);
   const [toasts, setToasts] = useState([]);
 
-  // Fetch devices from backend on mount
+  // PRODUCTION URL CONFIGURATION
+  // Replace this string with the URL Render gives you after deployment
+  const API_BASE = "https://orgwatch-api.onrender.com"; 
+
+  // Fetch devices
   useEffect(() => {
     if (isLoggedIn) {
       const fetchDevices = async () => {
         try {
-          const res = await axios.get('/api/devices');
-          // If backend returns empty, fallback to initial demo devices, else use real data
-          setDevices(res.data.length > 0 ? res.data : INITIAL_DEVICES);
+          const res = await axios.get(`${API_BASE}/api/devices`);
+          setDevices(res.data.length > 0 ? res.data : INITIAL_DEVICES); // Use Initial if Backend empty
         } catch (error) {
-          console.error("Failed to fetch devices:", error);
-          setDevices(INITIAL_DEVICES); // Fallback to demo mode if backend is offline
+          console.error("API Error", error);
+          setDevices(INITIAL_DEVICES); // Fallback
         }
       };
       
-      // Poll every 5 seconds
       fetchDevices();
-      const interval = setInterval(fetchDevices, 5000);
+      const interval = setInterval(fetchDevices, 3000); 
       return () => clearInterval(interval);
     }
   }, [isLoggedIn]);
