@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # 1. Database
   db:
     image: postgres:15-alpine
     container_name: orgwatch-db
@@ -14,10 +15,12 @@ services:
       - orgwatch-net
     restart: always
 
+  # 2. Backend API
   backend:
     build: ./backend
     container_name: orgwatch-api
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    # This command uses python module execution to ensure uvicorn is found
+    command: python -m uvicorn main:app --host 0.0.0.0 --port 8000
     volumes:
       - ./backend:/app
     ports:
@@ -31,6 +34,7 @@ services:
       - orgwatch-net
     restart: always
 
+  # 3. Frontend UI
   frontend:
     build: ./frontend
     container_name: orgwatch-ui

@@ -4,5 +4,11 @@ cryptography
 scikit-learn
 numpy
 watchdog
+joblib
 pefile
-pyinstaller
+wmi
+pystray
+pillow
+win10toast
+pywin32
+yara-python
