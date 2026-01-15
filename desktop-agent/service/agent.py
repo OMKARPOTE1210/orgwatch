@@ -7,7 +7,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import joblib, pefile, numpy as np
 
-# --- PRO FEATURES SUPPORT (Safe Imports) ---
+# --- PRO FEATURES SUPPORT (Safe Imports Only) ---
 wmi = None
 pythoncom = None
 win32api = None
@@ -16,7 +16,7 @@ ToastNotifier = None
 pystray = None
 Image = None
 yara = None
-auto = None
+# NOTE: 'uiautomation' is deliberately excluded to prevent AV False Positives
 
 try:
     import wmi
@@ -31,12 +31,11 @@ try:
     import pystray
     from PIL import Image
     import yara
-    import uiautomation as auto
 except ImportError:
     pass
 
 # --- CONFIGURATION ---
-# BACKEND CONNECTION
+# CHANGE THIS TO YOUR RENDER URL IN PROD, OR http://localhost:8000/api FOR LOCAL
 BACKEND_URL = "http://localhost:8000/api" 
 
 # PERSISTENCE & LOGGING PATHS (AppData)
@@ -173,7 +172,7 @@ class RegistryGuard:
             except: pass
 
 # ==========================================
-# MODULE 5: WEB GUARD (Phishing)
+# MODULE 5: WEB GUARD (DNS Cache - SAFE)
 # ==========================================
 class WebGuard:
     def __init__(self, agent):
@@ -191,36 +190,31 @@ class WebGuard:
         return f
 
     def check_loop(self):
-        if not auto: 
-            self.agent.log_ui("WebGuard: UI Automation Lib Missing")
-            return
-        try:
-            with auto.UIAutomationInitializerInThread():
-                while True:
-                    time.sleep(1)
-                    try:
-                        win = auto.GetForegroundControl()
-                        if win and any(b in win.Name for b in ["Chrome", "Edge", "Firefox"]):
-                            bar = win.EditControl(Name="Address and search bar")
-                            if not bar.Exists(0,0): bar = win.EditControl(searchDepth=4, ControlType=auto.ControlType.EditControl)
-                            if bar.Exists(0,0):
-                                url = bar.GetValuePattern().Value
-                                if url and url != self.last_url:
-                                    self.last_url = url
-                                    if "://" not in url: url = "http://" + url
-                                    if self.model and self.model.predict([self.extract(url)])[0] == 1:
-                                        self.agent.log_ui(f"🚫 PHISHING: {url}")
-                                        self.block(urlparse(url).netloc)
-                    except: pass
-        except: pass
+        """Safe DNS Cache Monitoring (No UI Automation)"""
+        while True:
+            time.sleep(5)
+            try:
+                # Read Windows DNS Cache (Legitimate Admin Command)
+                output = subprocess.check_output("ipconfig /displaydns", shell=True).decode('utf-8', errors='ignore')
+                domains = re.findall(r"Record Name\s+\.\s+:\s+(.*)", output)
+                for d in domains:
+                    d = d.strip()
+                    if d and d not in self.blocked:
+                        self.checked_domains.add(d)
+                        # Convert domain to URL for classifier
+                        if self.model and self.model.predict([self.extract(f"http://{d}")])[0] == 1:
+                            self.agent.log_ui(f"🚫 PHISHING DNS: {d}")
+                            self.block(d)
+            except: pass
     
     def block(self, domain):
         if domain in self.blocked: return
         try:
             with open(HOSTS_PATH, 'a') as f: f.write(f"\n{REDIRECT_IP} {domain}")
             self.blocked.add(domain)
+            # Kill Browser if blocked domain is active
             for p in psutil.process_iter(['name']):
-                if "chrome" in p.info['name']: p.kill()
+                if "chrome" in p.info['name'] or "msedge" in p.info['name']: p.kill()
             self.agent.send_alert(f"Phishing Blocked: {domain}")
         except: pass
 
@@ -280,7 +274,6 @@ class ProcessEDR:
 class RansomwareCanary(FileSystemEventHandler):
     def __init__(self, agent): self.agent = agent; self.setup()
     def setup(self):
-        if not os.path.exists(DOCS_DIR): return
         p = os.path.join(DOCS_DIR, "honey.txt")
         if not os.path.exists(p): 
             try: 
@@ -350,21 +343,22 @@ class ThreatScanner:
         score = 0; findings = []
         fname = os.path.basename(file_path).lower()
         
-        # YARA
+        # 1. YARA (Signature)
         yara_matches = self.yara.scan(file_path)
         if yara_matches: score += 100; findings.append(f"YARA: {', '.join(yara_matches)}")
 
-        # AI (0-Day)
+        # 2. AI (0-Day)
         if self.malware_model and fname.endswith((".exe", ".dll")):
             feats = self.extract_features(file_path)
             if feats and self.malware_model.predict([feats])[0] == 1: score += 95; findings.append("AI Malware")
         
-        # Entropy
+        # 3. Entropy (Ransomware)
         if os.path.exists(file_path):
             if self.calculate_entropy(file_path) > 7.2: score += 50; findings.append("High Entropy")
         
-        # Signatures
+        # 4. Keyword
         if any(x in fname for x in ["virus", "test", "malware", "eicar"]): score += 100; findings.append("Signature")
+
         return score, findings
     
     def deep_system_scan(self, agent_ref):
@@ -390,7 +384,7 @@ class MemoryScanner:
             try:
                 cmd = " ".join(proc.info['cmdline'] or []).lower()
                 if "base64" in cmd or "-enc" in cmd:
-                    self.agent.log_ui(f"🚨 MEMORY: {proc.info['name']}"); self.agent.send_alert(f"Fileless: {cmd[:30]}")
+                    self.agent.log_ui(f"🚨 MEMORY THREAT: {proc.info['name']}"); self.agent.send_alert(f"Fileless: {cmd[:30]}")
             except: pass
 
 # ==========================================
@@ -401,9 +395,18 @@ class RealTimeGuard(FileSystemEventHandler):
     def check(self, path):
         if not path or not os.path.exists(path) or ".quarantine" in path: return
         try:
-            time.sleep(0.1) # Debounce
-            s, f = self.scanner.quick_file_scan(path)
-            if s > 50: self.agent.handle_threat(path, s, f)
+            for i in range(5):
+                try:
+                    with open(path, 'rb') as f:
+                        if b"EICAR" in f.read(100): 
+                            self.agent.handle_threat(path, 100, ["EICAR"])
+                            return
+                    s, f = self.scanner.scan(path)
+                    if s > 50: 
+                        self.agent.handle_threat(path, s, f)
+                        return
+                    break
+                except PermissionError: time.sleep(0.05)
         except: pass
     def on_created(self, e): self.check(e.src_path)
     def on_modified(self, e): self.check(e.src_path)
@@ -437,7 +440,7 @@ class USBGuard:
 # MODULE 13: NETWORK GUARD
 # ==========================================
 class NetworkGuard:
-    def __init__(self, agent): self.agent = agent; self.model = None; self.last = psutil.net_io_counters()
+    def __init__(self, agent): self.agent = agent; self.model = None; self.last = psutil.net_io_counters(); self.last_t = time.time()
     def load_model(self):
         if os.path.exists(NIDS_MODEL_FILE):
              try: self.model = joblib.load(NIDS_MODEL_FILE)
@@ -456,7 +459,7 @@ class NetworkGuard:
             except: pass
 
 # ==========================================
-# MODULE 14: FILE INTEGRITY MONITOR
+# MODULE 14: FILE INTEGRITY
 # ==========================================
 class IntegrityGuard:
     def __init__(self, agent):
@@ -466,7 +469,7 @@ class IntegrityGuard:
         try:
             with open(path, "rb") as f: return hashlib.sha256(f.read()).hexdigest()
         except: return None
-    def check_integrity(self):
+    def check(self):
         while True:
             time.sleep(30)
             for p, h in self.hashes.items():
@@ -477,7 +480,7 @@ class IntegrityGuard:
                     self.hashes[p] = curr
 
 # ==========================================
-# MODULE 15: IDENTITY GUARD (UEBA)
+# MODULE 15: IDENTITY GUARD
 # ==========================================
 class IdentityGuard:
     def __init__(self, agent): self.agent = agent
@@ -487,9 +490,7 @@ class IdentityGuard:
             if 0 <= datetime.now().hour <= 5: 
                 self.agent.log_ui("🚨 IDENTITY: Abnormal Login Time")
 
-# ==========================================
-# FEATURE: BSOD SHIELD (God Mode)
-# ==========================================
+# --- FEATURE: BSOD SHIELD (God Mode) ---
 def enable_critical_status():
     if getattr(sys, 'frozen', False):
         try:
@@ -591,10 +592,9 @@ class OrgWatchAgent:
     def monitor_loop(self):
         while True:
             self.vault.sync()
-            cpu = psutil.cpu_percent(); ram = psutil.virtual_memory().percent
-            print(json.dumps({"type": "heartbeat", "data": {"usage": {"cpu_percent": cpu, "ram_percent": ram}}})); sys.stdout.flush()
+            print(json.dumps({"type": "heartbeat", "data": {"usage": {"cpu_percent": psutil.cpu_percent(), "ram_percent": psutil.virtual_memory().percent}}})); sys.stdout.flush()
             if self.is_enrolled:
-                try: requests.post(f"{BACKEND_URL}/telemetry", json={"device_id": self.device_id, "timestamp": datetime.now().isoformat(), "metrics": {"cpu": cpu, "ram": ram}, "ai_status": "normal"}, timeout=1)
+                try: requests.post(f"{BACKEND_URL}/telemetry", json={"device_id": self.device_id, "timestamp": datetime.now().isoformat(), "metrics": {"cpu": psutil.cpu_percent(), "ram": psutil.virtual_memory().percent}, "ai_status": "normal"}, timeout=1)
                 except: pass
                 try:
                     res = requests.get(f"{BACKEND_URL}/agent/{self.device_id}/commands", timeout=1); cmd = res.json()

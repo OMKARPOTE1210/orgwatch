@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { 
   LayoutDashboard, Monitor, ShieldAlert, Settings, Activity, Search, Bell, 
@@ -6,7 +6,7 @@ import {
   Lock, User, Globe, Cpu, HardDrive, Save, X, Plus, Trash2, RefreshCw, Power, ShieldCheck, 
   Smartphone as PhoneIcon, Bot, Sparkles, Terminal, FileText, BrainCircuit, Loader2, ScanEye,
   Wifi, BarChart3, PieChart, Zap, Skull, KeyRound, Download, FileJson, Hash, Globe2, ToggleRight,
-  Eye, ExternalLink
+  Eye, ExternalLink, Fingerprint, Network
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -19,6 +19,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 function cn(...classes) {
   return classes.filter(Boolean).join(' ');
 }
+
+// --- PRODUCTION URL CONFIGURATION ---
+// REPLACE WITH YOUR RENDER URL
+const API_BASE = "https://orgwatch-api.onrender.com"; 
 
 // Custom Glass Card Component
 const GlassCard = ({ children, className, hover = true }) => (
@@ -37,7 +41,22 @@ const GlassCard = ({ children, className, hover = true }) => (
   </motion.div>
 );
 
-/** MOCK DATA GENERATORS **/
+const ModuleStatus = ({ icon: Icon, title, status, enabled }) => (
+  <div className={`bg-slate-900/50 border ${enabled ? 'border-emerald-500/30' : 'border-slate-700'} p-4 rounded-xl flex items-center justify-between hover:bg-slate-800/50 transition-all`}>
+    <div className="flex items-center gap-4">
+      <div className={`p-2 rounded-lg ${enabled ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}>
+        <Icon size={20} />
+      </div>
+      <div>
+        <div className="text-xs text-slate-500 font-bold uppercase">{title}</div>
+        <div className={`text-sm font-bold ${enabled ? 'text-white' : 'text-slate-500'}`}>{enabled ? 'Active' : 'Disabled'}</div>
+      </div>
+    </div>
+    <div className={`w-3 h-3 rounded-full shadow-md ${enabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`} />
+  </div>
+);
+
+/** MOCK DATA GENERATORS (For Charts) **/
 const generateHistory = () => Array.from({ length: 12 }, (_, i) => ({
   time: `${i * 2}:00`,
   usage: Math.floor(Math.random() * 60) + 20,
@@ -54,35 +73,15 @@ const RADAR_DATA = [
   { subject: 'SQL Inj', A: 65, fullMark: 150 },
 ];
 
-const OS_DATA = [
-  { name: 'Windows 11', value: 400, color: '#3b82f6' },
-  { name: 'macOS', value: 300, color: '#8b5cf6' },
-  { name: 'Linux', value: 300, color: '#10b981' },
-  { name: 'iOS/Android', value: 200, color: '#f59e0b' },
-];
-
-const THREAT_INTEL_DATA = [
-  { id: 'IOC-2024-99', type: 'IP Address', value: '192.168.44.22', reputation: 'Malicious', origin: 'Russia', date: '2024-03-15' },
-  { id: 'IOC-2024-98', type: 'File Hash', value: 'a1b2...99c1', reputation: 'Suspicious', origin: 'Unknown', date: '2024-03-14' },
-  { id: 'IOC-2024-97', type: 'Domain', value: 'login-secure-update.com', reputation: 'Phishing', origin: 'China', date: '2024-03-12' },
-  { id: 'IOC-2024-96', type: 'C2 Server', value: '104.22.11.1', reputation: 'High Risk', origin: 'Iran', date: '2024-03-10' },
-  { id: 'IOC-2024-95', type: 'Email', value: 'hr-updates@fake-corp.com', reputation: 'Spam/Malware', origin: 'USA', date: '2024-03-09' },
-];
-
 const INITIAL_DEVICES = [
   { id: 'DEV-001', name: 'FIN-WORKSTATION-A', type: 'desktop', user: 'Alice Chen', ip: '10.0.4.55', status: 'online', risk: 12, os: 'Windows 11', cpu_usage: '12%', ram_usage: '45%', history: generateHistory() },
   { id: 'DEV-002', name: 'DEV-MACBOOK-PRO', type: 'laptop', user: 'Mark T.', ip: '10.0.4.102', status: 'warning', risk: 65, os: 'macOS Sonoma', cpu_usage: '88%', ram_usage: '92%', history: generateHistory() },
-  { id: 'DEV-003', name: 'HR-LAPTOP-04', type: 'laptop', user: 'Sarah J.', ip: '10.0.5.22', status: 'offline', risk: 0, os: 'Windows 10', cpu_usage: '0%', ram_usage: '0%', history: generateHistory() },
-  { id: 'DEV-004', name: 'PROD-DB-REPLICA', type: 'server', user: 'SYSTEM', ip: '192.168.1.5', status: 'online', risk: 5, os: 'Ubuntu 22.04', cpu_usage: '45%', ram_usage: '60%', history: generateHistory() },
-  { id: 'DEV-005', name: 'MKT-DESKTOP-02', type: 'desktop', user: 'Paul R.', ip: '10.0.4.89', status: 'online', risk: 28, os: 'Windows 11', cpu_usage: '22%', ram_usage: '34%', history: generateHistory() },
 ];
 
 const INITIAL_ALERTS = [
   { id: 1, title: 'Suspicious PowerShell Execution', desc: 'Encoded command block detected on startup registry key.', source: 'DEV-002', severity: 'critical', time: '10m ago' },
   { id: 2, title: 'Unusual Outbound Traffic', desc: 'High volume data transfer to unknown IP (84.12.x.x).', source: 'DEV-005', severity: 'high', time: '45m ago' },
 ];
-
-/** SHARED COMPONENTS **/
 
 const StatusBadge = ({ status }) => {
   const styles = {
@@ -214,9 +213,6 @@ const AIAnalysisModal = ({ target, onClose }) => {
   const [isExecuting, setIsExecuting] = useState(false);
   const [report, setReport] = useState(null);
 
-  // PRODUCTION URL CONFIGURATION
-  const API_BASE = "https://orgwatch.onrender.com"; 
-
   useEffect(() => {
     setLogs(["Requesting Secure Agent Handshake...", "Queuing AI Task on Device..."]);
     
@@ -225,12 +221,10 @@ const AIAnalysisModal = ({ target, onClose }) => {
 
     const startScan = async () => {
       try {
-        // 1. Send Command to Backend
         const res = await axios.post(`${API_BASE}/api/devices/${target.id}/scan`);
         commandId = res.data.command_id;
         setLogs(prev => [...prev, `Command Queued (ID: ${commandId})...`, "Waiting for Agent Response..."]);
         
-        // 2. Poll for Completion
         pollInterval = setInterval(async () => {
            try {
              const statusRes = await axios.get(`${API_BASE}/api/commands/${commandId}`);
@@ -260,15 +254,13 @@ const AIAnalysisModal = ({ target, onClose }) => {
 
   const handleDownload = () => {
     if (!report) return;
-    const content = `ORG-WATCH AI FORENSIC REPORT\n============================\nDate: ${new Date().toLocaleString()}\nTarget: ${target.name}\nID: ${target.id}\n\nVERDICT: ${report.verdict}\nRISK SCORE: ${report.riskScore}/100\n\nFINDINGS:\n${report.findings.join('\n')}`;
+    const content = `ORG-WATCH AI REPORT\nID: ${target.id}\nVERDICT: ${report.verdict}\nFINDINGS:\n${report.findings.join('\n')}`;
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `Report_${target.id}.txt`;
-    document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
   };
 
   return (
@@ -276,7 +268,7 @@ const AIAnalysisModal = ({ target, onClose }) => {
       <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md" onClick={onClose} />
       <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="relative w-full max-w-3xl bg-slate-900 border border-cyan-500/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
         <div className="p-4 border-b border-cyan-500/20 bg-cyan-950/20 flex justify-between items-center">
-          <div className="flex items-center gap-3"><Sparkles className="text-cyan-400 animate-pulse" size={20} /><h3 className="text-cyan-50 font-bold tracking-widest uppercase">OrgWatch Cortex <span className="text-cyan-400">AI</span></h3></div>
+          <div className="flex items-center gap-3"><Sparkles className="text-cyan-400 animate-pulse" size={20} /><h3 className="text-cyan-50 font-bold">ORG-CORTEX AI</h3></div>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={20} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-6 bg-slate-950/50">
@@ -290,8 +282,7 @@ const AIAnalysisModal = ({ target, onClose }) => {
           ) : (
             <div className="space-y-8 animate-fade-in">
               <div className="grid grid-cols-2 gap-4">
-                <div className="p-6 rounded-xl bg-slate-900 border border-slate-800 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-4 opacity-10"><BrainCircuit size={80} className="text-cyan-500"/></div>
+                <div className="p-6 rounded-xl bg-slate-900 border border-slate-800">
                   <div className="text-slate-400 text-xs font-bold uppercase mb-2">Verdict</div>
                   <div className={cn("text-xl font-bold flex items-center gap-2", report?.riskScore > 50 ? "text-red-400" : "text-emerald-400")}>{report?.riskScore > 50 ? <Skull size={24} /> : <CheckCircle2 size={24} />}{report?.verdict}</div>
                 </div>
@@ -303,14 +294,14 @@ const AIAnalysisModal = ({ target, onClose }) => {
               </div>
               <div>
                 <h4 className="text-white font-semibold mb-4 flex items-center gap-2"><FileText size={18} className="text-cyan-400"/> Forensic Findings</h4>
-                <div className="space-y-3">{report?.findings?.map((f, i) => (<motion.div key={i} initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1, transition: { delay: i * 0.1 } }} className="flex items-start gap-3 text-sm text-slate-300 p-3 rounded-lg bg-slate-800/40 border-l-2 border-red-500/50">{f}</motion.div>))}</div>
+                <div className="space-y-3">{report?.findings?.map((f, i) => (<div key={i} className="flex items-start gap-3 text-sm text-slate-300 p-3 rounded-lg bg-slate-800/40 border-l-2 border-red-500/50">{f}</div>))}</div>
               </div>
             </div>
           )}
         </div>
         {!isAnalyzing && (
           <div className="p-4 border-t border-slate-800 bg-slate-900 flex justify-end gap-3">
-            <button onClick={handleDownload} className="px-4 py-2 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg text-sm flex items-center gap-2"><Download size={16} /> Download Report</button>
+            <button onClick={handleDownload} className="px-4 py-2 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg text-sm flex items-center gap-2"><Download size={16} /> Report</button>
             <button onClick={handleExecution} disabled={isExecuting} className={cn("px-6 py-2 text-white font-medium rounded-lg shadow-lg transition-all flex items-center gap-2", "bg-gradient-to-r from-red-600 to-red-800 hover:shadow-red-500/20")}>
               {isExecuting ? <Loader2 size={16} className="animate-spin" /> : <Terminal size={16} />} {isExecuting ? "Executing..." : "Resolve"}
             </button>
@@ -321,7 +312,7 @@ const AIAnalysisModal = ({ target, onClose }) => {
   );
 };
 
-// --- DETAIL MODAL ---
+// --- DEVICE DETAIL MODAL ---
 const DeviceDetailModal = ({ device, onClose, onAnalyze, onIsolate }) => {
   if (!device) return null;
   const historyData = device.history || generateHistory();
@@ -366,17 +357,15 @@ const DeviceDetailModal = ({ device, onClose, onAnalyze, onIsolate }) => {
                </AreaChart>
              </ResponsiveContainer>
            </div>
-           <div className="h-64 bg-slate-900/50 rounded-xl border border-slate-800 p-4">
-              <h4 className="text-white font-semibold mb-4 text-sm flex gap-2"><ScanEye size={16}/> Device Health Profile</h4>
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart cx="50%" cy="50%" outerRadius="80%" data={deviceRadar}>
-                  <PolarGrid stroke="#334155" />
-                  <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
-                  <Radar name="Device" dataKey="A" stroke="#8b5cf6" strokeWidth={2} fill="#8b5cf6" fillOpacity={0.3} />
-                </RadarChart>
-              </ResponsiveContainer>
+           
+           {/* Protection Modules Visualizer */}
+           <div className="grid grid-cols-2 gap-4">
+               <ModuleStatus icon={Fingerprint} title="AD Sentry" status="Active" enabled={true} />
+               <ModuleStatus icon={Lock} title="Ransomware" status="Active" enabled={true} />
+               <ModuleStatus icon={Globe} title="Phishing Guard" status="Active" enabled={true} />
+               <ModuleStatus icon={Network} title="Firewall" status="Active" enabled={true} />
            </div>
+
         </div>
         <div className="p-6 border-t border-slate-800 bg-slate-900 flex gap-4">
            <button onClick={() => onAnalyze(device)} className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20"><Bot size={18}/> Run AI Diagnostics</button>
@@ -389,7 +378,7 @@ const DeviceDetailModal = ({ device, onClose, onAnalyze, onIsolate }) => {
 
 // --- VIEWS ---
 
-const DashboardView = ({ devices, alerts }) => (
+const DashboardView = ({ devices, alerts, logs }) => (
   <div className="space-y-6 animate-fade-in pb-10">
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
       <GlassCard className="flex items-center justify-between"><div><p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Total Fleet</p><h3 className="text-3xl font-bold text-white mt-1">{devices.length}</h3><div className="text-emerald-400 text-xs font-bold mt-2 flex items-center gap-1"><Wifi size={12}/> 98% Online</div></div><div className="p-3 bg-cyan-500/10 rounded-xl text-cyan-400"><Server size={24} /></div></GlassCard>
@@ -397,6 +386,7 @@ const DashboardView = ({ devices, alerts }) => (
       <GlassCard className="flex items-center justify-between"><div><p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Security Score</p><h3 className="text-3xl font-bold text-white mt-1">84<span className="text-lg text-slate-500">/100</span></h3><div className="text-emerald-400 text-xs font-bold mt-2 flex items-center gap-1"><CheckCircle2 size={12}/> Optimal</div></div><div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400"><Activity size={24} /></div></GlassCard>
       <GlassCard className="flex items-center justify-between"><div><p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Network Load</p><h3 className="text-3xl font-bold text-white mt-1">4.2<span className="text-lg text-slate-500"> TB</span></h3><div className="text-cyan-400 text-xs font-bold mt-2 flex items-center gap-1"><Zap size={12}/> Heavy Load</div></div><div className="p-3 bg-purple-500/10 rounded-xl text-purple-400"><BarChart3 size={24} /></div></GlassCard>
     </div>
+    
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <GlassCard className="lg:col-span-2 min-h-[400px]">
         <div className="flex justify-between items-center mb-6"><h3 className="text-white font-bold flex items-center gap-2"><Globe size={18} className="text-cyan-400"/> Global Network Traffic</h3><select className="bg-slate-800 text-slate-300 text-xs rounded border border-slate-700 px-2 py-1 outline-none"><option>Last 24 Hours</option><option>Last 7 Days</option></select></div>
@@ -417,99 +407,25 @@ const DashboardView = ({ devices, alerts }) => (
           </ResponsiveContainer>
         </div>
       </GlassCard>
+      
+      {/* Live Event Stream */}
       <GlassCard>
-        <h3 className="text-white font-bold mb-6 flex items-center gap-2"><ShieldCheck size={18} className="text-purple-400"/> Attack Vector Analysis</h3>
-        <div className="h-[320px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <RadarChart cx="50%" cy="50%" outerRadius="80%" data={RADAR_DATA}>
-              <PolarGrid stroke="#334155" />
-              <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-              <PolarRadiusAxis angle={30} domain={[0, 150]} tick={false} axisLine={false} />
-              <Radar name="Threats" dataKey="A" stroke="#8b5cf6" strokeWidth={2} fill="#8b5cf6" fillOpacity={0.4} />
-              <Tooltip contentStyle={{backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#fff'}} />
-            </RadarChart>
-          </ResponsiveContainer>
+        <h3 className="text-white font-bold mb-4 flex items-center gap-2"><Terminal size={18} className="text-purple-400"/> Live Event Stream</h3>
+        <div className="h-[320px] overflow-y-auto custom-scrollbar space-y-2">
+            {logs.map((log, i) => (
+                <div key={i} className="text-[10px] border-b border-slate-800 pb-1 mb-1">
+                    <div className="flex justify-between text-slate-500 mb-0.5">
+                        <span>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                        <span className="font-mono text-cyan-400">{log.device_id}</span>
+                    </div>
+                    <div className={`font-mono ${log.event.includes('Threat') ? 'text-red-400' : 'text-slate-300'}`}>
+                        {log.event} - {log.details}
+                    </div>
+                </div>
+            ))}
         </div>
       </GlassCard>
     </div>
-  </div>
-);
-
-const ThreatIntelView = () => (
-  <div className="space-y-6 animate-fade-in pb-10">
-    <div className="flex gap-4 mb-4">
-      <div className="p-4 bg-red-950/20 border border-red-500/20 rounded-xl flex-1 flex items-center gap-4">
-        <div className="p-3 bg-red-500/20 rounded-full text-red-500"><Globe2 size={24}/></div>
-        <div><div className="text-sm text-slate-400">Global Threat Level</div><div className="text-2xl font-bold text-white">ELEVATED</div></div>
-      </div>
-      <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl flex-1 flex items-center gap-4">
-        <div className="p-3 bg-slate-800 rounded-full text-slate-400"><Hash size={24}/></div>
-        <div><div className="text-sm text-slate-400">IOCs Ingested</div><div className="text-2xl font-bold text-white">12,402</div></div>
-      </div>
-    </div>
-    <GlassCard>
-      <div className="flex justify-between items-center mb-6">
-        <h3 className="text-white font-bold flex items-center gap-2"><FileJson size={18} className="text-cyan-400"/> Live Indicator Feed</h3>
-        <div className="flex gap-2">
-          <button className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded-lg hover:text-white">IP Addresses</button>
-          <button className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded-lg hover:text-white">Hashes</button>
-          <button className="px-3 py-1.5 bg-slate-800 text-xs text-slate-300 rounded-lg hover:text-white">Domains</button>
-        </div>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-slate-800 text-slate-500 text-sm">
-              <th className="p-3 font-medium">Indicator ID</th>
-              <th className="p-3 font-medium">Type</th>
-              <th className="p-3 font-medium">Value</th>
-              <th className="p-3 font-medium">Origin</th>
-              <th className="p-3 font-medium">Date</th>
-              <th className="p-3 font-medium">Reputation</th>
-              <th className="p-3 font-medium text-right">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {THREAT_INTEL_DATA.map((ioc, i) => (
-              <tr key={i} className="border-b border-slate-800/50 text-slate-300 hover:bg-slate-800/30">
-                <td className="p-3 font-mono text-cyan-400 text-xs">{ioc.id}</td>
-                <td className="p-3 text-sm">{ioc.type}</td>
-                <td className="p-3 font-mono text-slate-400 text-xs">{ioc.value}</td>
-                <td className="p-3 text-sm">{ioc.origin}</td>
-                <td className="p-3 text-sm text-slate-500">{ioc.date}</td>
-                <td className="p-3"><span className="px-2 py-1 bg-red-500/10 text-red-400 rounded text-xs border border-red-500/20">{ioc.reputation}</span></td>
-                <td className="p-3 text-right"><button className="p-1 hover:text-cyan-400 text-slate-500"><ExternalLink size={14}/></button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </GlassCard>
-  </div>
-);
-
-const SettingsView = () => (
-  <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
-    <GlassCard>
-      <h3 className="text-white font-bold mb-6 text-lg border-b border-slate-800 pb-4">System Configuration</h3>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div><div className="text-white font-medium">Multi-Factor Authentication</div><div className="text-sm text-slate-500">Require 2FA for all admin logins</div></div>
-          <ToggleRight className="text-emerald-500 cursor-pointer" size={32} />
-        </div>
-        <div className="flex items-center justify-between">
-          <div><div className="text-white font-medium">AI Auto-Response</div><div className="text-sm text-slate-500">Allow Cortex to isolate devices automatically if risk &gt; 90%</div></div>
-          <ToggleRight className="text-slate-600 cursor-pointer" size={32} />
-        </div>
-        <div className="flex items-center justify-between">
-          <div><div className="text-white font-medium">Data Retention</div><div className="text-sm text-slate-500">Log storage period (Days)</div></div>
-          <input type="number" className="bg-slate-950 border border-slate-800 text-white p-2 rounded w-20 text-center" defaultValue={90} />
-        </div>
-        <div className="pt-4 border-t border-slate-800 flex justify-end">
-          <button className="px-6 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg transition-all">Save Changes</button>
-        </div>
-      </div>
-    </GlassCard>
   </div>
 );
 
@@ -518,34 +434,12 @@ const SettingsView = () => (
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [activeView, setActiveView] = useState('dashboard');
+  const [devices, setDevices] = useState([]);
+  const [alerts, setAlerts] = useState(INITIAL_ALERTS);
+  const [logs, setLogs] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [aiAnalysis, setAiAnalysis] = useState({ isOpen: false, type: null, target: null });
-  const [devices, setDevices] = useState([]); // Start empty, fetch real data
-  const [alerts, setAlerts] = useState(INITIAL_ALERTS);
   const [toasts, setToasts] = useState([]);
-
-  // PRODUCTION URL CONFIGURATION
-  // Replace this string with the URL Render gives you after deployment
-  const API_BASE = "https://orgwatch-api.onrender.com"; 
-
-  // Fetch devices
-  useEffect(() => {
-    if (isLoggedIn) {
-      const fetchDevices = async () => {
-        try {
-          const res = await axios.get(`${API_BASE}/api/devices`);
-          setDevices(res.data.length > 0 ? res.data : INITIAL_DEVICES); // Use Initial if Backend empty
-        } catch (error) {
-          console.error("API Error", error);
-          setDevices(INITIAL_DEVICES); // Fallback
-        }
-      };
-      
-      fetchDevices();
-      const interval = setInterval(fetchDevices, 3000); 
-      return () => clearInterval(interval);
-    }
-  }, [isLoggedIn]);
 
   const addToast = (message, type = 'info') => {
     const id = Date.now();
@@ -562,6 +456,29 @@ export default function App() {
       addToast(`Device ${id} successfully isolated.`, 'success');
     }, 1500);
   };
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      const fetchDevices = async () => {
+        try {
+          const res = await axios.get(`${API_BASE}/api/devices`);
+          setDevices(res.data.length > 0 ? res.data : INITIAL_DEVICES);
+        } catch (error) { console.error("API Error", error); setDevices(INITIAL_DEVICES); }
+      };
+      
+      const fetchLogs = async () => {
+        try {
+            const res = await axios.get(`${API_BASE}/api/logs`);
+            if(res.data.length > 0) setLogs(res.data);
+        } catch(e) {}
+      };
+
+      fetchDevices();
+      fetchLogs();
+      const interval = setInterval(() => { fetchDevices(); fetchLogs(); }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [isLoggedIn]);
 
   const handleLogin = () => setIsLoggedIn(true);
   const handleLogout = () => setIsLoggedIn(false);
@@ -632,10 +549,9 @@ export default function App() {
         <main className="flex-1 overflow-y-auto p-8 relative z-0">
           <AnimatePresence mode="wait">
              <motion.div key={activeView} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
-               {activeView === 'dashboard' && <DashboardView devices={devices} alerts={alerts} />}
+               {activeView === 'dashboard' && <DashboardView devices={devices} alerts={alerts} logs={logs} />}
                {activeView === 'devices' && (
                  <div className="grid gap-4">
-                    {devices.length === 0 && <div className="text-slate-500 text-center mt-10">No agents connected. Run the Desktop Agent to enroll.</div>}
                     {devices.map((d) => (
                       <div key={d.id} onClick={() => setSelectedDevice(d)} className="group bg-slate-900/40 p-5 rounded-xl border border-slate-800 hover:border-cyan-500/40 hover:bg-slate-800/60 transition-all cursor-pointer flex items-center justify-between">
                          <div className="flex items-center gap-4">
